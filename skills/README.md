@@ -21,6 +21,7 @@ inside the skill itself (not a separate doc) so it can never drift out of sync w
 | [csr-checks](./csr-checks/SKILL.md) | Address sanity checks on CNIC register definition files (overlaps, out-of-range, intra-IP conflicts) | `python3 <skill-dir>/scripts/check_addr_conflicts.py` |
 | [extract-csr-access](./extract-csr-access/SKILL.md) | Extract fully RO / WO / sensitive registers from MMG AL register CSVs | `python3 <skill-dir>/scripts/extract_ro_registers.py` |
 | [generate-hifmc-als](./generate-hifmc-als/SKILL.md) | Generate HIF-MC autoload CSVs via `hifmc_db.py` and copy them into mmg / mmg-800 / cnic | `python3 <skill-dir>/scripts/generate_hifmc_als.py <target_repo_path>` |
+| [al-intake](./al-intake/SKILL.md) | Validate AL/NVM CSV changes against their CRIF (erase+regen mini_crif) and, only after user confirms path+method, propagate to another environment | `python3 <skill-dir>/scripts/validate_als.py --git-changed <repo_root> --since HEAD~2` |
 
 ## Installing a skill into a repo
 
