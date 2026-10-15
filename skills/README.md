@@ -23,6 +23,7 @@ inside the skill itself (not a separate doc) so it can never drift out of sync w
 | [generate-hifmc-als](./generate-hifmc-als/SKILL.md) | Generate HIF-MC autoload CSVs via `hifmc_db.py` and copy them into mmg / mmg-800 / cnic | `python3 <skill-dir>/scripts/generate_hifmc_als.py <target_repo_path>` |
 | [al-intake](./al-intake/SKILL.md) | Validate AL/NVM CSV changes against their CRIF (erase+regen mini_crif) and, only after user confirms path+method, propagate to another environment | `python3 <skill-dir>/scripts/validate_als.py --git-changed <repo_root> --since HEAD~2` |
 | [create-step](./create-step/SKILL.md) | Create a new stepping/environment directory (EMULATION/R<N>, SIMICS/vp<N>, or a hybrid step mixing two steppings) for mmg-800 / mmg / mev / cnic | `python3 <skill-dir>/scripts/build_step.py --base-root <dir> --dest-root <dir> --mode copy\|symlink` |
+| [nvm-struct-validation](./nvm-struct-validation/SKILL.md) | Context/continuity for the MMG/MEV/CNIC NVM Init Module & Runtime Params struct-validation feature; tracks the chosen `dev/sleonarx/valid` implementation, its known gaps, and the rejected `dev/sleonarx/struct` reference | `python NVMGenerator/struct_validation.py --new <new.h> --baseline <baseline.h>` (see SKILL.md for full procedure) |
 
 ## Installing a skill into a repo
 
