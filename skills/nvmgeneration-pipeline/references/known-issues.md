@@ -192,3 +192,159 @@ What the log showed:
 This is the log that [diagnose_pipeline_log.py](../scripts/diagnose_pipeline_log.py) was built to
 replay-diagnose automatically — run it against a similar log and compare its "Jenkins CPS agent
 stability" and "Exceptions / serialization errors" sections to this writeup.
+
+## 8. `createPR()`/`waitForPrHeadSha()` use a different, apparently-unauthorized GitHub credential than the rest of the file — spurious 404s, no CPS crash required
+
+**Status: FIXED** (observed in build #4532, 2026-10-22, mmg PR #2265 + mmg800 PR #427 bundle).
+
+Every other GitHub call in this file (`GithubGet()`/`GithubPost()` in `ci_groovy/github.groovy`,
+used by `findOpenPullRequestByBranch()`, `notifyRepoPullRequest()`'s comment-posting, etc.)
+authenticates with `-H "Authorization: token $GITHUB_TOKEN"` bound from
+`CREDENTIALS_ID_GITHUB_TOKEN_MAIN` (= `CREDENTIALS_ID_GITHUB_SYS_SYSFW2`, the `sys_sysfw2_gh`
+service-account credential). But `createPR()`'s two hand-rolled curls (the existing-PR lookup and
+the PR-creation POST) and `waitForPrHeadSha()`'s head-sha poll all instead use `-u
+"${user}:${token}"` HTTP Basic Auth bound from `SYS_SYSFW_CREDENTIALS_ID` — a constant that is
+**not declared anywhere in `NVMGeneration.groovy` itself** (only in sibling pipeline files
+`RegistersBATPipeline.groovy`/`create_pr_for_header_files.groovy`/`anvm_system_test.groovy`, where
+it equals `c7087dce-6b6e-431a-802a-0afdd037e766` = `CREDENTIALS_ID_GITHUB_SYS_SYSFW`, the **older**
+`sys_sysfw` account) — so it must resolve from a shared-library/global binding outside this repo.
+`updateBundleCheckerStatus()` also hands this same `SYS_SYSFW_CREDENTIALS_ID`-bound token to
+`update_pr.py -t $token`.
+
+**Symptom signature observed:**
+- `createPR()`'s existing-PR-lookup curl (`-u user:token`) returns a literal GitHub `{"message":
+  "Not Found","status":"404"}` for a PR that demonstrably exists and is open — confirmed in the
+  very same build, within the same minute, by `findOpenPullRequestByBranch()` (`-H "Authorization:
+  token"` auth) returning `200` for the identical repo, AND by a *successful* (`201`) PR comment
+  post moments earlier via the same `GithubPost()`/token-header path.
+- `createPR()` then concludes "No existing PR found, creating a new one", re-pushes (no-op,
+  already up to date), and POSTs to `/pulls` — which **also** 404s with the same Basic-Auth style.
+  The unhandled 404 triggers the pipeline's own `error "Failed to create PR...."` step, which is
+  what directly sets `currentBuild.currentResult = FAILURE` for the whole build in this incident —
+  no CPS flapping, no `JsonSlurper`/`LazyMap` crash (issue §1) needed to explain the failure this
+  time; 0 CPS offline events, 0 exceptions anywhere in the log.
+- Because this `error` is thrown from inside the `repoCommitWrapper()`/`createPRWrapper()` call for
+  one repo in the middle of the "Commit and create PR" stage's sequential `repoCommitWrapper()`
+  calls (nvm_gen → mmg → mmg800 → mev → cnic), and nothing in that stage catches it, **every repo
+  later in the sequence than the one that hit the 404 is silently never processed this run** — no
+  "Running in .../<repo>_config/..." directory trace, no "`<repo> changed status`" log line for
+  any of them at all. In this incident, mmg800/mev/cnic's `repoCommitWrapper()` never ran, so
+  mmg800's real autoload changes (if any existed) for this run were never evaluated, committed, or
+  pushed — mmg800's PR only got touched by `post{always{}}`'s final bundle-wide
+  `updateBundleCheckerStatus()` call, using whatever its head already was before this build.
+- `waitForPrHeadSha()` (same Basic-Auth credential) polls `GET /pulls/<prId>` for the repo that
+  *did* commit (mmg here) and reports the head sha as **`null` on every one of its 6 attempts**
+  over ~40s, then gives up with a warning and proceeds anyway. This is consistent with that GET
+  also silently 404ing (`{"message":"Not Found",...}` has no `head` key, so `json?.head?.sha`
+  safe-navigates to `null` — this is NOT a parsing bug in `waitForPrHeadSha()` itself, the
+  `json?.head?.sha` access is correct; the response body is just the same auth-rejected 404).
+- `update_pr.py` (handed the same `SYS_SYSFW_CREDENTIALS_ID`-bound token) then posts the final
+  `FAILURE` status, but its printed API response resolves to a commit **from a day earlier**
+  ("Update README.md", authored the day before this run) — and critically, **the exact same stale
+  commit** was also what it resolved hours earlier for the initial `PENDING` status post (before
+  this run had pushed anything). I.e. `update_pr.py`, using this credential, never once saw this
+  PR's true current head in this build, before or after the push — consistent with this credential
+  having degraded/stale/no real read access to this repo's live PR state, not just propagation lag
+  (contrast with issue §2, which assumes eventual consistency).
+
+**Net effect on the two bundle PRs' checkers in this incident:**
+- **mmg800** (no commit this run, `repoHeadShas` has no entry for it, `waitForPrHeadSha()` is
+  skipped) → `update_pr.py -s FAILURE` resolves its real, unchanged current head correctly → PR
+  shows **red**, as expected.
+- **mmg** (did commit `bc3f248` this run) → `waitForPrHeadSha()` can't confirm the new head (always
+  null) → `update_pr.py` posts `FAILURE` against an unrelated day-old commit, never against
+  `bc3f248` → GitHub has **no status at all** on mmg's actual current head this run → a required
+  check with no status renders as pending/**yellow** ("Expected"), not red, even though the build
+  genuinely failed and even though an early `PENDING` was posted (also against a stale, pre-this-
+  run commit) long before the real push happened.
+
+**Hypothesis, not yet confirmed**: the `sys_sysfw` account/token bound to `SYS_SYSFW_CREDENTIALS_ID`
+either lacks (or has lost) read/write access to this repo, or Basic Auth itself is being rejected
+by this GHE instance for API calls — GitHub (and GHE) return `404` rather than `401`/`403` for
+unauthenticated/under-authorized access to a private repo's endpoints, specifically to avoid
+leaking repo existence to callers without access. This would explain every symptom above
+uniformly. **Not yet verified directly against the credential store** — treat as the leading
+explanation, not a confirmed fact, until someone can check the `SYS_SYSFW_CREDENTIALS_ID` Jenkins
+credential's current validity/scope against this repo.
+
+**Fix applied**: switched `createPR()`'s two curls and `waitForPrHeadSha()` to the same
+`CREDENTIALS_ID_GITHUB_TOKEN_MAIN`/`-H "Authorization: token ${token}"` pattern already used (and
+known-working) everywhere else in this file, in place of the stale `SYS_SYSFW_CREDENTIALS_ID`/
+HTTP-Basic-Auth path (`waitForPrHeadSha()`'s now-unused `ghUser` parameter was dropped).
+`updateBundleCheckerStatus()`'s own `withCredentials` binding (which also supplies the `-t $token`
+passed to `update_pr.py`) was switched the same way. Separately, each
+`repoCommitWrapper()`/`createPRWrapper()` call in the "Commit and create PR" stage's per-repo
+sequence is now wrapped in its own `try/catch` — failures are logged and collected, and a single
+aggregated `error(...)` is raised only after every repo has had its chance to commit/create a PR,
+so one repo's `createPR()` failure can no longer silently skip the repos after it in the list
+(previously mmg800/mev/cnic never ran once mmg's `createPR()` threw). The remaining 6
+`SYS_SYSFW_CREDENTIALS_ID` usages elsewhere in the file (`getUserDetails()`, `commitEmail()`,
+`sendEmail()`, `pushChanges()`, the unused/dead `checkGithubRateLimit()`, and the non-fatal
+`post{always{}}` rate-limit diagnostic) were deliberately left unchanged — they either don't
+actually use the bound token/user in their body, call a different external script
+(`find_pr_mail.py`) not implicated in this incident, or are non-fatal diagnostics; changing them
+was out of scope for this fix.
+
+**Not fully confirmed**: whether the root cause was specifically the *credential identity*
+(`sys_sysfw` vs `sys_sysfw2`) or the *Basic-Auth mechanism* itself being rejected by this GHE
+instance (or both) was not verified directly against the credential store — the fix addresses both
+possibilities at once (switching both the credential and the auth header style to the known-good
+combination), but this hasn't yet been confirmed against a live re-run of this exact bundle.
+
+## 9. `findOpenPullRequestByBranch()` silently searched the wrong (unfiltered) page of PRs — missed genuinely-open, older PRs
+
+**Status: FIXED** (in `findOpenPullRequestByBranch()` only — deliberately scoped to
+`NVMGeneration.groovy`, not the shared `github.groovy` helper; see Root cause below).
+
+**Symptom signature observed** (build triggered on a cnic PR bundled with mev/mmg/mmg800/the
+NVM-generator tool repo itself): the build finished `SUCCESS` and every bundle PR's checker was
+correctly updated to green **except** the one in `firmware.ethernet.mountevans.snic-nvm-generator`
+(`NVM_GENERATOR_REPO`). The log showed, both in "Mark Bundle PRs Pending" and in the final
+`post{}` bundle update: `No open PR found on branch <branch> in
+firmware.ethernet.mountevans.snic-nvm-generator, skipping checker update for it` — even though the
+target PR (e.g. #2234) was confirmed via `pull_request_read`/`list_pull_requests` to be genuinely
+`open`, not merged, not closed, with `head.ref` exactly matching the bundle branch.
+
+**Root cause**: `GithubGet(githubUrl, expCode, query)` in
+[ci_groovy/github.groovy](/home/sleonarx/ci-general/ci_groovy/github.groovy) serializes its
+`query` Map argument into a curl **`-d` JSON request body**, but the request itself is always
+`-X GET`. GitHub's REST API only reads filters (`state`, `head`, `per_page`, ...) from the **URL
+query string** for GET endpoints — a JSON body on a GET request is silently ignored, not an error.
+`findOpenPullRequestByBranch()` is the *only* call site in all of `ci-general` that passes a
+non-empty `query` map to `GithubGet()` (confirmed by grep across the repo), so this bug is isolated
+to bundle-PR resolution, but it silently breaks it: every call actually hit GitHub's **unfiltered
+default** result set for `GET /repos/{owner}/{repo}/pulls` — `state=open` (coincidentally matches),
+`sort=created&direction=desc`, `per_page=30` — i.e. just "the 30 most-recently-*created*-and-still-
+open PRs in the repo", nothing to do with the requested branch. The function's client-side
+`data.findAll { it.head.ref == branch }` then filtered *that* irrelevant page, which obviously
+misses any target PR that isn't among the 30 newest. Confirmed directly against the live GitHub
+API: a `head`-filtered-by-bare-branch-name request (simulating the bug, no owner prefix, real query
+string) still returned those same unrelated 30 PRs; a request using the proper
+`owner:branch`/`org:branch` `head` format (e.g. `intel-innersource:dev/sleonarx/test`) as an actual
+query-string parameter immediately returned the single correct match. PR #2234 (created many months
+earlier than ~90 other currently-open PRs in that repo) was exactly the kind of case this silently
+breaks — a real, open, correctly-named PR invisible to the lookup for no reason a user could see in
+the GitHub UI.
+
+**Why this went unnoticed for other bundle repos in the same run**: whether a repo's target PR
+happens to be among its own 30-most-recently-*created* open PRs at call time is incidental — it
+depends only on how many newer open PRs that repo happens to have accumulated, not on anything
+about the PR itself. The config repos' PRs in this run happened to be recent/low-churn enough to
+still land in that default page; `NVM_GENERATOR_REPO` evidently accumulates many more long-lived
+open PRs, so it was the one to miss. Any bundle repo can silently hit this given enough open-PR
+churn.
+
+**Fix (scoped to `NVMGeneration.groovy` only, `github.groovy` intentionally left untouched since
+other pipelines call `GithubGet()` too)**: `findOpenPullRequestByBranch()` now builds the filter
+query string itself (URL-encoded via `java.net.URLEncoder.encode()`, already used elsewhere in this
+file) and folds it directly into the `githubUrl` path passed to `GithubGet()`, calling it with no
+`query` map at all so it never appends its broken `-d` body. `head` is now sent as
+`"${GIT_ORG_INTEL}:${branch}"` (org-prefixed) instead of a bare branch name, matching what GitHub's
+API actually requires to filter same-repo PRs by head branch. Verified: syntax-checked clean via
+Groovy's `CompilationUnit` at `Phases.CONVERSION`; the corrected query format was confirmed
+directly against the live GitHub API to return exactly the expected single PR.
+
+**If `GithubGet()`'s `query` parameter is ever passed a non-empty map at a new call site in the
+future**, it will hit this same silent-no-op bug — the real, root-cause fix (query string in the
+URL, not a `-d` body, inside `GithubGet()` itself) is still outstanding in `github.groovy` and
+should be applied there if a second call site ever needs it.
