@@ -24,6 +24,7 @@ inside the skill itself (not a separate doc) so it can never drift out of sync w
 | [al-intake](./al-intake/SKILL.md) | Validate AL/NVM CSV changes against their CRIF (erase+regen mini_crif) and, only after user confirms path+method, propagate to another environment | `python3 <skill-dir>/scripts/validate_als.py --git-changed <repo_root> --since HEAD~2` |
 | [create-step](./create-step/SKILL.md) | Create a new stepping/environment directory (EMULATION/R<N>, SIMICS/vp<N>, or a hybrid step mixing two steppings) for mmg-800 / mmg / mev / cnic | `python3 <skill-dir>/scripts/build_step.py --base-root <dir> --dest-root <dir> --mode copy\|symlink` |
 | [nvmgeneration-pipeline](./nvmgeneration-pipeline/SKILL.md) | Explain/debug the NVMGeneration.groovy Jenkins pipeline (PR-bundle checker-status logic); log forensics + known-bug history | `python3 <skill-dir>/scripts/diagnose_pipeline_log.py <jenkins_console_log>` |
+| [reset-nvm-cache](./reset-nvm-cache/SKILL.md) | Clear both root-level NVM hash caches and create a local commit without including unrelated staged changes | `/reset-nvm-cache <target_repo_path>` |
 
 ## Installing a skill into a repo
 
