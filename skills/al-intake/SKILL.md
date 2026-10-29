@@ -1,6 +1,6 @@
 ---
 name: al-intake
-description: 'Run an "AL intake": validate Autoload (AL) NVM CSV changes against their CRIF via validate_auto_load.py (erasing/regenerating the corresponding mini_crif first), and - only after explicitly confirming destination path and method with the user - propagate the validated ALs and mini_crifs from one environment tree (e.g. an EMULATION_A0 stepping) into another (e.g. its SIMICS_A0/vpNN counterpart). Use when asked to: do an AL intake, validate autoload/AL changes, run AL validation, validate ALs from the last N commits or working tree, erase and regenerate a mini_crif, copy/sync ALs from emulation to simulation/simics, propagate validated autoloads to another environment.'
+description: 'Run an "AL intake": validate Autoload (AL) NVM CSV changes against their CRIF via validate_auto_load.py (erasing/regenerating the corresponding mini_crif first), and - only after explicitly confirming destination path and method with the user - propagate the validated ALs and mini_crifs from one environment tree (e.g. an EMULATION_A0 stepping) into another (e.g. its SIMICS_A0/vpNN counterpart). Use when asked to: do an AL intake, validate autoload/AL changes, run AL validation, validate ALs from the last N commits or working tree, erase and regenerate a mini_crif, copy/sync ALs from emulation to simulation/simics, propagate validated autoloads to another environment. Also detects renamed AL option (column) names and asks whether to update networking.ipu.anvm/meta_data/super_features source_csv_col references.'
 argument-hint: "<al_file>... | --git-changed <repo_root> [--since <git-rev>]"
 ---
 
@@ -77,6 +77,46 @@ Report back a `PASS`/`FAIL` line per AL file (the script already prints this tab
 overall `N/M passed`. If anything failed, open its log under `--log-dir` (default
 `/tmp/al_intake_logs/<al_basename>.log`) before concluding — don't guess at the cause.
 
+## Step 1b — Detect renamed option names and offer to update meta_data
+
+An AL's *option names* are the per-option column headers on its `BlockName,RegisterName,...`
+row (e.g. `lantxhspm_HostEP.EthMode_NtwkArb_HostEP_1_EthQoS_ptc_PaTCa_MGV800`). The repo's
+`networking.ipu.anvm/meta_data/super_features/**/options/*.json` files reference them through
+`"source_csv_col"`, so a renamed column silently breaks the option unless meta_data is updated too.
+
+**Always run this after a passing validation** (it is read-only without `--apply`):
+
+```bash
+python3 <skill-dir>/scripts/check_option_renames.py --git-changed <repo_root> [--since HEAD~2]
+# or explicit files:  check_option_renames.py <al_file> [<al_file> ...]
+```
+
+It compares each changed AL's header against the base revision (`HEAD`, or `--since REV`), pairs
+renamed columns by position (only when the column count is unchanged), and lists every
+`source_csv_col` under `<repo_root>/networking.ipu.anvm/meta_data/super_features` (override with
+`--meta-dir`) that still uses an old name. Exit code 2 = stale references / unpaired removed
+columns found; 0 = nothing to do.
+
+Procedure:
+
+1. If the script reports **no renames**, say so in the report and continue.
+2. If it reports renames **and** stale meta_data references, show the user the old → new list and
+   the meta_data files affected, then **ask (ask_user) whether to update meta_data**. Never pass
+   `--apply` without that confirmation, in this conversation.
+3. On confirmation re-run the same command with `--apply` (rewrites only the exact quoted
+   `"<old>"` → `"<new>"` strings), then re-run it without `--apply` to confirm it reports nothing
+   left. Review `git diff` of the meta_data dir.
+4. If renamed columns exist but nothing in meta_data references them, report that and don't edit.
+5. **Unpaired removed columns** (column count changed, or columns were added/removed rather than
+   renamed) can't be mapped automatically — list them for the user and fix meta_data manually
+   (add/remove options) only as they direct.
+6. Only `source_csv_col` follows the AL column; the option *name* (`"name"`, e.g. `mgv`) and the
+   feature JSON `"options"` lists stay as they are unless the user explicitly asks to rename the
+   option itself (precedent: `pcie_hif_fw/options/mgv.json` has `source_csv_col: "FNIC"`).
+7. The same AL in several steppings (EMULATION `R<N>` / SIMICS `vp<N>`) yields one shared rename
+   map; meta_data points at `latest` paths, so renames in older steppings you did not touch are
+   not reflected. No commit is performed.
+
 ## Step 2 — Propagate to another environment (requires user confirmation, every time)
 
 **Hard rule: never invoke [copy_als_to_destination.py](./scripts/copy_als_to_destination.py) with
@@ -123,6 +163,9 @@ python3 <skill-dir>/scripts/copy_als_to_destination.py \
    commit is performed** — they should review `git status` in the destination repo themselves.
 
 ## Extending
+
+- Meta_data layout different in another repo (e.g. `mev`)? Pass `--meta-dir` to
+  [check_option_renames.py](./scripts/check_option_renames.py).
 
 - New alias needed for `resolve_crif()`? Add it to `KNOWN_CRIF_ALIASES` in
   [al_intake_common.py](./scripts/al_intake_common.py) — the content-scan fallback means an
