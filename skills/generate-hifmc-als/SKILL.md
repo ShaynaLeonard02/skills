@@ -20,8 +20,8 @@ Runs `hifmc_db.py` to (re)generate HIF Master Control autoload CSVs and copies t
 
 | Destination repo basename | Topologies generated | Source repo (has `hifmc_db.py`) | Destination paths |
 |---|---|---|---|
-| `mmg` | `mmg` (suffix stripped), `lwc` (suffix kept) | ggl repo (`.../hif-shared/hifmc_db`) | `MMG/HW/latest/FLASH_s/ALs/HIF`, `MMG/SIMICS/latest/FLASH_s/ALs/HIF` |
-| `mmg-800` | `mmg` (suffix stripped) | ggl repo | `MMG800/EMULATION/<target>/FLASH_s/ALs/HIF` (default target: `latest`) |
+| `mmg` | `mmg` (suffix stripped), `lwc` (suffix kept) | `networking.ipu.firmware` (`ucode/hif-shared/hifmc_db`; replaces the archived ggl repo) — `lwc` still comes from the row repo | `MMG/HW/latest/FLASH_s/ALs/HIF`, `MMG/SIMICS/latest/FLASH_s/ALs/HIF` |
+| `mmg-800` | `mmg` (suffix stripped) | `networking.ipu.firmware` (`ucode/hif-shared/hifmc_db`) | `MMG800/EMULATION/<target>/FLASH_s/ALs/HIF` (default target: `latest`) |
 | `cnic` | `row`, `bts`, `fnic` (suffix kept) | row repo (`.../hif-shared/hifmc_db`) | `NSC/CNIC_800_{EMULATION,SIMICS}_A0/latest/FLASH_s/ALs/HIF/{row,,fnic}` (bts has no subfolder) |
 | `mev` | — | — | **Excluded intentionally** — not a destination in `CachingPipeline.groovy`'s copy stage |
 

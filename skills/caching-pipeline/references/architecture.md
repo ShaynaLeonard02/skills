@@ -77,12 +77,16 @@ for i in 0..maxSteps-1:                       # one iteration = one branch "cach
             MMG800: 3x generate (Veloce/Simics/SILICON, stepping latest, FS_s)
                     3x generate_anvm (PHASE2_COMMON_SIMICS_VELOCE_MMG, PHASE2_LM, PHASE2_HMA) + self-healing -caching_f retry
             CNIC  : 4x generate_super_image (CNIC_BOOT_IMAGES, --boot-only)
-        git add -A (minus NVMGenerator.log, hifmc *.csv under EMULATION/*/FLASH_s/ALs/HIF, files >100MB)
+        git clean -fdq generate_output|cnic_boot_image_output + root image_* (untracked artifacts never committed)
+        git add -A (minus NVMGenerator.log, hifmc *.csv under EMULATION/*/FLASH_s/ALs/HIF, files >100MB,
+                    plus reset of generate_output|cnic_boot_image_output + root image_* leftovers)
         deterministic commit "[Caching]: generate results ..." ; push
         allCommits += commits on branch (excluding "[Caching]: Set symlinks" commits)
     catch (Exception): log, currentBuild.result='FAILURE', env.<repo>_failed='true'   # loop continues
-final: checkout <branch>; checkout -b cachingFinal-<REPO>-<date>; cherry-pick allCommits;
-       reset --soft <branch>; rm generate_output|cnic_boot_image_output;
+final: checkout <branch>; checkout -b cachingFinal-<REPO>-<date>;
+       cherryPickWithConflictLog(allCommits) -> on conflict prints conflicting files + hunks
+         (git diff --diff-filter=U), guarded --skip, marks FAILURE + env.<repo>_failed;
+       reset --soft <branch>; rm generate_output|cnic_boot_image_output + image_*;
        unstage all; stage ONLY root al_path_to_hash*.json + non-root *.tar.gz;
        if nothing staged  -> abandon, "doesn't have any caching updates"
        commit (deterministic); if tree == <branch> tree -> abandon;  else push + createPR
