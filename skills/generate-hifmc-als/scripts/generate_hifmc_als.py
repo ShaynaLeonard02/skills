@@ -25,7 +25,9 @@ import sys
 # Source repos that contain hifmc_db.py, and which --topology values each
 # one is responsible for generating.
 # ---------------------------------------------------------------------------
-DEFAULT_GGL_REPO = "/home/sleonarx/projects/ggl_repo_name_repo/sources/imc/hif-shared/hifmc_db"
+# The old ggl repo was archived; hifmc_db now lives in networking.ipu.firmware
+# (ucode/hif-shared/hifmc_db). It ships topologies 'mmg' and 'mmg800' only.
+DEFAULT_GGL_REPO = "/home/sleonarx/networking.ipu.firmware/ucode/hif-shared/hifmc_db"
 DEFAULT_ROW_REPO = "/home/sleonarx/projects/row_repo_name_repo/sources/imc/hif-shared/hifmc_db"
 
 # topology -> (source repo key, whether the topology suffix should be
@@ -216,7 +218,7 @@ def copy_files(output_dir, dest_dir, topology, strip_suffix, dry_run):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("repo_path", help="Destination repo to generate HIF-MC ALs for (mmg, mmg-800, or cnic)")
-    parser.add_argument("--ggl-repo", default=DEFAULT_GGL_REPO, help="Path to the hifmc_db source repo for topology 'mmg'")
+    parser.add_argument("--ggl-repo", default=DEFAULT_GGL_REPO, help="Path to the hifmc_db dir (networking.ipu.firmware/ucode/hif-shared/hifmc_db) for topology 'mmg'")
     parser.add_argument("--row-repo", default=DEFAULT_ROW_REPO, help="Path to the hifmc_db source repo for topologies lwc/bts/row/fnic")
     parser.add_argument("--mmg800-targets", default="latest",
                          help="For mmg-800 destinations only: 'latest' (default), 'all', or a comma list like 'R27,R28'")

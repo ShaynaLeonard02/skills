@@ -42,7 +42,7 @@ logical unit of work — see "The Bundle" below.
 | `MMG800_CONFIG_REPO` | `firmware.ethernet.mountmorgan800.snic-nvm-generator-config` | `check_branch()` → `mmg800_branch` |
 | `SDK_TOOLS_REPO` | `firmware.ethernet.mountmorgan.sdk-tools` | fixed `SDK_TOOLS_REPO_BRANCH` ('main') — contains `scripts/update_pr.py`, see §6 |
 | `CNIC_CONFIG_REPO` | `firmware.ethernet.cnic.nvm-generator-config` | `check_branch()` → `cnic_branch` |
-| `HIFMC_REPO` | `firmware.ethernet.mountevans.imc.hif-shared` | fixed `"mmg_trunk"` — cloned sequentially with `HIFMC_NSC_REPO` (`firmware.ethernet.nsc.hifmc-nsc-common.fw`, fixed `"main"`) into the same `hifmc_path`, since both must land in the same directory |
+| `HIFMC_REPO` | `networking.ipu.firmware` (replaces the archived `firmware.ethernet.mountevans.imc.hif-shared`; `hifmc_db` lives at `HIFMC_DB_SUBDIR` = `ucode/hif-shared/hifmc_db`) | fixed `"main"` — cloned sequentially with `HIFMC_NSC_REPO` (`firmware.ethernet.nsc.hifmc-nsc-common.fw`, fixed `"main"`) into the same `hifmc_path`, since both must land in the same directory |
 | `DDR_REPO` | `firmware.ethernet.mountmorgan.ts.ddr` | fixed |
 | `ROW_REPO` | `firmware.ethernet.imc-fw-row` | fixed |
 

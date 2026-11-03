@@ -80,16 +80,38 @@ Signature: `iteration index N failed` containing `Aborted by` / `Timeout`. A fix
 
 ## 5. Squash cherry-pick problems
 
-**Status: OPEN/SUSPECTED.**
+**Status: FIXED (artifact-exclusion + conflict logging in `CachingPipeline.groovy`).**
 
-The final branch does `git cherry-pick <sha> --allow-empty || git cherry-pick --skip` for every collected commit,
-then `reset --soft`. Consequences to remember:
-- A real conflict is **silently skipped** (`--skip`), so the PR can miss one index's cache with no error.
-- Commits from different indices that touch the same `al_path_to_hash*.json` can conflict → same skip.
-- If `cherry-pick --skip` itself fails (no cherry-pick in progress) the step errors and the repo/CNIC/MMG800
-  processing stage dies after all generators already ran.
-Look for `CONFLICT` / `could not apply` (S6) near `cachingFinal-` creation. Failed indices (`*_failed`) contribute
-commits too — partial results are intentionally still PR'd, flagged "DON'T MERGE".
+The final branch cherry-picks every collected per-index commit onto `cachingFinal-*`, then
+`reset --soft`. Historically this was `git cherry-pick <sha> --allow-empty || git cherry-pick --skip`,
+with three failure modes (all observed/possible):
+- A real conflict was **silently skipped** (`--skip`), so the PR could miss one index's cache with no error.
+- Commits from different indices touching the same `al_path_to_hash*.json` — or the same committed
+  build artifacts — conflicted → same silent skip. The dominant conflict source was that the per-index
+  `git add -A` committed `generate_output/` (MMG800), `cnic_boot_image_output/` (CNIC) and root-level
+  `image_*` dirs (`generate_anvm` has no `-o` and writes image dirs into the repo root); neither config
+  repo's `.gitignore` covers them, and each index produces different versions of the same artifact paths.
+- If `cherry-pick --skip` itself failed (no cherry-pick in progress) the step errored and the
+  CNIC/MMG800 processing stage died after all generators already ran.
+
+**Fix (in the pipeline, both repo engines):**
+- Per-index commits no longer contain the artifacts: `git clean -fdq -- <output_dir> 'image_*'` runs
+  before `git add -A`, plus a defensive `git reset HEAD -- <output_dir> 'image_*'` for any
+  already-tracked leftovers (git clean never touches tracked files, so legit repo content is safe).
+- `cherryPickWithConflictLog()` replaces the blind skip: on a failed pick it **prints the conflicting
+  files (`git diff --name-only --diff-filter=U`) and the full conflict hunks
+  (`git --no-pager diff --diff-filter=U`)** — so an `al_path_to_hash*.json` collision is visible in the
+  log — then skips with a guarded `--skip || --abort || true` (stage can no longer die), and the caller
+  sets `currentBuild.result='FAILURE'` + `env.<repo>_failed='true'` so a PR built with skipped commits
+  is flagged "DON'T MERGE" instead of looking green.
+- When a conflict is detected, the pipeline now keeps the per-index `caching-<date>-N` branches on
+  GitHub instead of deleting them, and the results email lists the retained branches and warns that
+  the conflicting changes were not included in the PR.
+
+Look for `CONFLICT` / `could not apply` (S6) and the new
+`ERROR: <REPO>: cherry-pick of <sha> FAILED` / `merge conflicts in:` markers near `cachingFinal-`
+creation. Failed indices (`*_failed`) contribute commits too — partial results are intentionally still
+PR'd, flagged "DON'T MERGE".
 
 ## 6. GitHub / auth / proxy failures
 
@@ -180,3 +202,63 @@ MMG800 per-step copy nor of `verifyRequiredAlFiles()` for CNIC. If a CNIC `gener
 | `4e7bba8ba` | Branch parameters for testing; force-run `R28_R29_hybrid`; mail warning. |
 | `0cdda6b39` | Branch/PR naming aligned per project (CNIC/MMG800). |
 | `b1c6254bd` | Initial nightly caching for all steps. |
+
+## 14. Unpacked caches from unrelated steps enter per-index commits
+
+**Status: CONFIRMED in the 2026-11-01 unsquashed debug run.**
+
+**Symptom:** an index whose `latest` links select hybrid steps also adds thousands
+of files under older steps' `caching_files/` and `caching_files_bid/`.
+
+**Root cause:** generator archive extraction scans whole config roots, not only
+the current `latest` target. Compression leaves extracted directories available
+for other processes; per-index `git add -A` stages them. Each branch starts from
+the base branch, so the same unpacked files can appear in multiple index commits.
+The unsquashed debug mode exposes these artifacts directly instead of filtering
+them at final consolidation.
+
+**Evidence:** MMG800 commit `1281e920a` adds 1,216 paths under R25 and 1,433 each
+under R27 and R27_R28_hybrid, all within unpacked cache directories; none of those
+steps' archives changes. A PKB `0.csv` sample from each matches both its parent's
+archive member and index-0 commit `b28d0cae`. Do not interpret these additions as
+proof that the older steps were rebuilt.
+
+**Fix direction:** restrict per-index staging to intended cache artifacts,
+excluding unpacked cache directories and image/output leftovers. Consolidate
+root hash registries separately; do not silently skip conflicting commits.
+*(Partially addressed via #5: `generate_output`/`cnic_boot_image_output`/root
+`image_*` leftovers are no longer committed, and conflicting cherry-picks are
+now logged with their conflict hunks and flagged as FAILURE instead of being
+skipped silently. The unpacked `caching_files*/` staging itself is still OPEN.)*
+
+## 15. Parallel branch circles show WHITE (no status) in the Jenkins graph views
+
+**Status: FIXED — `stagedParallel()` wrapper (working tree after `34b7b3c24`).**
+
+**Symptom:** in Blue Ocean / Pipeline Graph View, the parallel branch circles
+(`Branch: generate_Veloce_FS_s`, `generate_anvm_PHASE2_*`, `super_image_*`, the
+clone branches) are neither green nor red — they stay white/grey — even in a run
+that ends `Finished: FAILURE` with real `generate`/`generate_anvm` failures
+(e.g. the 2026-11-02 run on `dev/sleoarx/fix` @ `34b7b3c24`, MMG800 PR #474).
+
+**Root cause:** the scripted `parallel` branches were bare closures with **no
+`stage` step inside**. A branch without an enclosing stage has no stage node to
+carry a SUCCESS/FAILURE status, so graph views render it as a "no status" white
+circle. Additionally, `catchError(buildResult: 'FAILURE', stageResult:
+'FAILURE')` **silently ignores `stageResult` when there is no enclosing stage**
+— so even genuinely failed branches had nothing to paint red (the build-level
+result still went red via `buildResult`). Commit `c73c435d6` (cherry-pick
+conflict handling + email reminder) did not touch this, which is why it did not
+fix the circles.
+
+**Fix:** the `stagedParallel(Map branchBodies, String stagePrefix = '')` helper
+wraps every branch body in `stage("${stagePrefix}${name}")` before calling
+`parallel`. Used at all three call sites: clone stage (no prefix), CNIC
+(`"[CNIC idx ${i}] "`), MMG800 (`"[MMG800 idx ${i}] "`) — the per-index prefix
+keeps stage names unique across the per-index loop. The `parallel` map keys are
+unchanged, so the `Branch: <name>` log lines (relied on by
+`diagnose_caching_log.py`'s timeline) are preserved.
+
+**Check:** after the fix, each branch circle must be green on success and red
+when its `catchError` catches a `error(...)`. If circles go white again, look
+for a new `parallel` call site that bypasses `stagedParallel`.
