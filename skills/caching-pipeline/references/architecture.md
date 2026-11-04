@@ -35,8 +35,9 @@ refreshed cache artifacts. It never commits regenerated ALs / hifmc CSVs.
 | `HIFMC_NSC_REPO` | `...nsc.hifmc-nsc-common.fw` | `main` | cloned next to hifmc (not otherwise referenced) |
 | `ROW_REPO` | `...imc-fw-row` | `main` | `hifmc_db.py` for `lwc`,`bts`,`row`,`fnic` |
 
-Only MMG800 and CNIC get step branches and generator runs. MEV/MMG are inputs whose caching
-output (if any) is picked up by `processSharedConfigRepo`.
+Only MMG800 gets step branches, generator-result commits and a final PR. **CNIC is run-only**: it flips
+symlinks in the working tree and runs the generator to surface errors, with no branches, commits, pushes or PR.
+MEV/MMG are inputs whose caching output (if any) is picked up by `processSharedConfigRepo`.
 
 ## 3. Stage flow
 
@@ -51,14 +52,26 @@ output (if any) is picked up by `processSharedConfigRepo`.
    - MMG800: into **every** `MMG800/EMULATION/<step>/FLASH_s/ALs/HIF` (`copyGeneratedFiles` + `rename_mmg800_csv_files` strips `_mmg800`);
    - CNIC: into `NSC/CNIC_800_{EMULATION,SIMICS}_A0/latest/FLASH_s/ALs/HIF[/row|/fnic]` (**`latest` only**, see known-issues #11).
 5. **Collect MMG/MEV changes** — `processSharedConfigRepo()` for MEV then MMG (see §6; ordering concern in known-issues #10).
-6. **Process CNIC Config** (`when RUN_CNIC`) — `processCnicConfig()`.
+6. **Process CNIC Config** (`when RUN_CNIC`) — `processCnicConfig()` (run-only, see §4 "CNIC differences"); returns the
+   result line `🟢 CNIC succeeded in the run` or `🔴 CNIC failed in the run`.
 7. **Process MMG800 Config** (`when RUN_MMG800`) — `processMmg800Config()`.
-8. **Send Email** — one `<li>` per repo; `has caching updates` → PR link (+ "DON'T MERGE - RUN FAILED" only if the PR itself is
+8. **Send Email** — one `<li>` per repo; the CNIC item is the result line printed verbatim (no PR wording);
+   for other repos `has caching updates` → PR link (+ "DON'T MERGE - RUN FAILED" only if the PR itself is
    incomplete, i.e. a cherry-pick was skipped); otherwise "no PR needed". Per repo with failed indices an extra
    `🔴👮‍♀️ERROR in these steps: [<folder>/<symlink>:<step>, ...]` paragraph (+ retained branches) is added. Footer warnings are **hard-coded text** (CNIC_A0, vp23, R28_R29_hybrid).
 9. **post** — `cleanWs`; on failure a second mail with the log attached.
 
-## 4. The per-repo engine (CNIC and MMG800 share the same shape)
+## 4. The per-repo engine (MMG800; CNIC shares the front half only)
+
+**CNIC differences (run-only):** `processCnicConfig()` uses the same folder discovery, skip logic and per-index
+symlink flip as below, but after the flip it only runs the 4x `generate_super_image` (CNIC_BOOT_IMAGES) and then
+`git clean -fdq -- cnic_boot_image_output 'image_*'`. There is **no** `git checkout`/branch, commit, push, squash,
+cherry-pick, PR or branch deletion, and the tracked tree is not reset between indices (so the HIF ALs copied into
+`latest` survive, but cache files written by one index remain for the next). Failed indices still set the build to
+FAILURE and feed `env.cnic_failed_steps` (the email ERROR line); `env.cnic_failed_branches` is always empty and
+`env.cnic_failed` is never set. Because no symlink commits are pushed, the history-based skip never learns about
+steps CNIC ran — the set of steps only changes when others merge symlink changes to `CNIC_BRANCH`. The pseudo-code
+below therefore applies fully to MMG800 only.
 
 ```
 folders[]  = [{path, symlinks[]}]        # MMG800: EMULATION,SIMICS (latest)  CNIC: 4 NSC folders (latest[,fw_latest,sw_latest])
@@ -109,8 +122,9 @@ Key properties:
 - **Failure model is "keep going, mark red"**: per-branch `catchError(buildResult:'FAILURE', stageResult:'FAILURE')`,
   per-index `try/catch`. **Per-index isolation:** an index with any failed step is excluded from the final PR
   (`env.<repo>_failed_steps` / `env.<repo>_failed_branches` feed the email's ERROR line); the PR built from the
-  remaining good indices carries no warning. `env.cnic_failed` / `env.mmg800_failed` now only mean "the final PR is
+  remaining good indices carries no warning. `env.mmg800_failed` now only means "the final PR is
   itself incomplete" (skipped cherry-pick) → "DON'T MERGE". **A red build with a clean PR is expected.**
+  (CNIC has no PR; any failed index only makes the build red and adds the ERROR line.)
 - **generate_anvm self-healing**: first run uses the cache; on failure it re-runs once with `-caching_f True`
   (force rebuild) so the post-run `compress_caching_directories()` writes a complete archive that this stage commits.
   Only if the retry also fails is the branch marked failed. `-validate_crif True` is always on.
@@ -135,11 +149,13 @@ decisions use the `hasUpdates` flag (fix commit `aba762df9`).
 ## 7. Output contract (strings other tooling/mail parse)
 
 - `Repo: <repo> has caching updates: <url>` / `Repo: <repo> doesn't have any caching updates` — the mail regex
-  `Repo: (.+?) doesn't have any caching updates` depends on this exact text.
-- Branches: `caching-<date>-<N>` (temp, deleted), `cachingFinal-<date>` (MEV/MMG), `cachingFinal-CNIC-<date>`, `cachingFinal-MMG800-<date>`.
-- PR titles: `[Caching] All updates <yyyy-MM-dd>`, `[Caching] CNIC All updates <date>`, `[Caching] MMG800 All updates <date>`.
+  `Repo: (.+?) doesn't have any caching updates` depends on this exact text (MMG800/MEV/MMG only).
+- CNIC result line (printed verbatim in the mail; the email code special-cases `label == 'CNIC'`):
+  `🟢 CNIC succeeded in the run` / `🔴 CNIC failed in the run`.
+- Branches: `caching-<date>-<N>` (temp, deleted; MMG800 only), `cachingFinal-<date>` (MEV/MMG), `cachingFinal-MMG800-<date>`.
+- PR titles: `[Caching] All updates <yyyy-MM-dd>`, `[Caching] MMG800 All updates <date>`.
 - Commit subjects: `[Caching]: Set symlinks for index N`, `[Caching]: generate results for index N`,
-  `[Caching]: generate_super_image results for index N`, `[Autoload MMG800 all]: Updates`, `[Autoload CNIC all]: Updates`.
+  `[Autoload MMG800 all]: Updates` (MMG800 only; CNIC creates no commits).
 
 ## 8. Log markers (what the forensics script keys off)
 

@@ -283,3 +283,21 @@ or `ERROR: <REPO> index N commits (if any) are EXCLUDED` for the exception path.
 **Caveats:** `env.<repo>_failed` is now set only by a skipped cherry-pick (→ DON'T MERGE). A folder with fewer steps
 repeats its last step, so that step's label can appear under a failed index even if the other folder caused it.
 MEV/MMG email items still take the MMG800 PR-level flag (#12 quirk unchanged).
+
+## 17. CNIC is run-only (no branches, commits or PR)
+
+**Status: IMPLEMENTED (working tree).**
+
+**Behavior:** `processCnicConfig()` only flips symlinks in the working tree and runs the 4x `generate_super_image`
+per index, to detect errors in upcoming steps. It creates no `caching-<date>-N` / `cachingFinal-CNIC-*` branches,
+no commits, pushes, cherry-picks or PR, and deletes nothing on GitHub. Cache artifacts it produces are discarded
+by `cleanWs`. The tracked tree is not reset between indices (HIF ALs copied into `latest` must survive), so cache
+files from one index remain visible to the next.
+- Mail line: `🟢 CNIC succeeded in the run` (no failed index) or `🔴 CNIC failed in the run`, printed verbatim.
+  Failed indices additionally appear in the `🔴👮‍♀️ERROR in these steps` line (no branch note). Build is FAILURE on any failure.
+- **Log markers:** `ERROR: CNIC index N had failed steps (...)` and `ERROR: CNIC iteration index N failed: ...`; no
+  `EXCLUDED`, `PR created`, `Content identical` or `has caching updates` lines for CNIC. `CNIC Result: <line>` is still echoed.
+- **Consequences to remember:** no symlink commits means the history-based skip (`getStepsToSkip`) never learns which
+  steps CNIC ran, so the step list only changes when someone else merges symlink changes into `CNIC_BRANCH`; cache
+  fixes for CNIC must be done manually (the pipeline no longer proposes them); #5 (cherry-pick conflicts) and the
+  CNIC part of #16 (exclusion/kept branches) no longer apply to CNIC.
