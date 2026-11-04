@@ -1,6 +1,6 @@
 ---
 name: caching-pipeline
-description: 'Explain, debug, and fix the CachingPipeline.groovy Jenkins pipeline (ci-general repo, SDK/CachingPipeline.groovy) - the nightly "Caching-Nightly" job that, for the MMG800 and CNIC NVM-generator config repos, flips latest symlinks across every uncached stepping, runs generate / generate_anvm / generate_super_image per step, and opens one squashed PR of caching_files*.tar.gz + al_path_to_hash*.json per repo (plus MEV/MMG caches). Use when asked to: diagnose a failed or red Caching Pipeline build or its "Caching Pipeline FAILED" email, analyze a Caching Pipeline Jenkins console log, explain why a PR was or was not created, debug missing HIF ALs or "caching_files/N.csv" FileNotFoundError, generate_anvm -caching_f retry, skip-logic / which steps ran, symlink/latest handling, cherry-pick/squash or push/PR/token failures, or propose a fix/change to this pipeline (add/skip/force a step, new image group, new HIF AL).'
+description: 'Explain, debug, and fix the CachingPipeline.groovy Jenkins pipeline (ci-general repo, SDK/CachingPipeline.groovy) - the nightly "Caching-Nightly" job that, for the MMG800 and CNIC NVM-generator config repos, flips latest symlinks across every uncached stepping, runs generate / generate_anvm / generate_super_image per step, and opens one squashed PR of caching_files*.tar.gz + al_path_to_hash*.json for MMG800 (plus MEV/MMG caches); CNIC is run-only (no branches/commits/PR, just a succeeded/failed result line). Use when asked to: diagnose a failed or red Caching Pipeline build or its "Caching Pipeline FAILED" email, analyze a Caching Pipeline Jenkins console log, explain why a PR was or was not created, debug missing HIF ALs or "caching_files/N.csv" FileNotFoundError, generate_anvm -caching_f retry, skip-logic / which steps ran, symlink/latest handling, cherry-pick/squash or push/PR/token failures, or propose a fix/change to this pipeline (add/skip/force a step, new image group, new HIF AL).'
 argument-hint: "<jenkins_console_log_path> [--repo CNIC|MMG800]  |  a question about CachingPipeline.groovy"
 ---
 
@@ -73,7 +73,8 @@ Walk the failure through the architecture ([architecture.md §4](./references/ar
    `generate_super_image` (boot image). Pull the generator's own traceback just above the `ERROR:` lines
    (`grep -n` the line number from the report and `view` ±80 lines).
 4. **Classify:** missing input file (#1/#2/#3/#11) · CRIF/AL data error (#8) · infra (#6/#7/#9) · pipeline logic (#4/#5/#10/#12).
-5. **Did a PR result anyway?** Failed indices are excluded from the PR (known-issues #16): red build + clean PR +
+5. **Did a PR result anyway?** (MMG800/MEV/MMG only — **CNIC is run-only and never creates a PR/branch**, known-issues #17;
+   its mail line is `🟢 CNIC succeeded in the run` / `🔴 CNIC failed in the run`.) Failed indices are excluded from the PR (known-issues #16): red build + clean PR +
    `🔴👮‍♀️ERROR in these steps` mail line is the designed behavior; "DON'T MERGE" now means a cherry-pick was skipped.
    "no PR" with failures means nothing cacheable was staged, every index failed, or tree equals base (`Content identical`).
 6. State a root cause **and say explicitly what you could not confirm** (e.g. "log shows the pre-flight passed
