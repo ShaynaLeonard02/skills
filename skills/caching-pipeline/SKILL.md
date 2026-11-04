@@ -73,8 +73,9 @@ Walk the failure through the architecture ([architecture.md §4](./references/ar
    `generate_super_image` (boot image). Pull the generator's own traceback just above the `ERROR:` lines
    (`grep -n` the line number from the report and `view` ±80 lines).
 4. **Classify:** missing input file (#1/#2/#3/#11) · CRIF/AL data error (#8) · infra (#6/#7/#9) · pipeline logic (#4/#5/#10/#12).
-5. **Did a PR result anyway?** Red build + PR + "DON'T MERGE" is the designed behavior for partial failures;
-   "no PR" with failures means nothing cacheable was staged, or tree equals base (`Content identical`).
+5. **Did a PR result anyway?** Failed indices are excluded from the PR (known-issues #16): red build + clean PR +
+   `🔴👮‍♀️ERROR in these steps` mail line is the designed behavior; "DON'T MERGE" now means a cherry-pick was skipped.
+   "no PR" with failures means nothing cacheable was staged, every index failed, or tree equals base (`Content identical`).
 6. State a root cause **and say explicitly what you could not confirm** (e.g. "log shows the pre-flight passed
    for SIMICS, but the failing step was EMULATION — see known-issues #1 caveat").
 
