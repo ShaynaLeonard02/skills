@@ -53,8 +53,9 @@ output (if any) is picked up by `processSharedConfigRepo`.
 5. **Collect MMG/MEV changes** — `processSharedConfigRepo()` for MEV then MMG (see §6; ordering concern in known-issues #10).
 6. **Process CNIC Config** (`when RUN_CNIC`) — `processCnicConfig()`.
 7. **Process MMG800 Config** (`when RUN_MMG800`) — `processMmg800Config()`.
-8. **Send Email** — one `<li>` per repo; `has caching updates` → PR link (+ "DON'T MERGE - RUN FAILED" if the flag is set);
-   otherwise "no PR needed" (+ "Run FAILED" warning). Footer warnings are **hard-coded text** (CNIC_A0, vp23, R28_R29_hybrid).
+8. **Send Email** — one `<li>` per repo; `has caching updates` → PR link (+ "DON'T MERGE - RUN FAILED" only if the PR itself is
+   incomplete, i.e. a cherry-pick was skipped); otherwise "no PR needed". Per repo with failed indices an extra
+   `🔴👮‍♀️ERROR in these steps: [<folder>/<symlink>:<step>, ...]` paragraph (+ retained branches) is added. Footer warnings are **hard-coded text** (CNIC_A0, vp23, R28_R29_hybrid).
 9. **post** — `cleanWs`; on failure a second mail with the log attached.
 
 ## 4. The per-repo engine (CNIC and MMG800 share the same shape)
@@ -81,16 +82,18 @@ for i in 0..maxSteps-1:                       # one iteration = one branch "cach
         git add -A (minus NVMGenerator.log, hifmc *.csv under EMULATION/*/FLASH_s/ALs/HIF, files >100MB,
                     plus reset of generate_output|cnic_boot_image_output + root image_* leftovers)
         deterministic commit "[Caching]: generate results ..." ; push
-        allCommits += commits on branch (excluding "[Caching]: Set symlinks" commits)
-    catch (Exception): log, currentBuild.result='FAILURE', env.<repo>_failed='true'   # loop continues
+        indexFailures (any generate/generate_anvm/super_image branch failed) ?
+            -> index EXCLUDED: commits not collected, steps -> failedSteps, branch kept on GitHub, build FAILURE
+        else allCommits += commits on branch (excluding "[Caching]: Set symlinks" commits)
+    catch (Exception, e.g. pre-flight/push): same exclusion as above   # loop continues
 final: checkout <branch>; checkout -b cachingFinal-<REPO>-<date>;
        cherryPickWithConflictLog(allCommits) -> on conflict prints conflicting files + hunks
-         (git diff --diff-filter=U), guarded --skip, marks FAILURE + env.<repo>_failed;
+         (git diff --diff-filter=U), guarded --skip, marks FAILURE + env.<repo>_failed (=> "DON'T MERGE");
        reset --soft <branch>; rm generate_output|cnic_boot_image_output + image_*;
        unstage all; stage ONLY root al_path_to_hash*.json + non-root *.tar.gz;
        if nothing staged  -> abandon, "doesn't have any caching updates"
        commit (deterministic); if tree == <branch> tree -> abandon;  else push + createPR
-delete every caching-<date>-N step branch from GitHub
+delete every successful caching-<date>-N step branch from GitHub (failed-index and conflict branches are kept)
 ```
 
 Key properties:
@@ -104,8 +107,10 @@ Key properties:
 - **Only cache artifacts reach the PR**: root `al_path_to_hash*.json` and `*.tar.gz` with depth ≥2. Everything else
   (incl. `generate_output`, hifmc CSVs, `NVMGenerator.log`) is discarded at squash time, even if it was committed on a step branch.
 - **Failure model is "keep going, mark red"**: per-branch `catchError(buildResult:'FAILURE', stageResult:'FAILURE')`,
-  per-index `try/catch`, and `env.cnic_failed` / `env.mmg800_failed`. A failed run can still open a PR (flagged
-  "DON'T MERGE" in the mail) — **a red build with a PR is expected**.
+  per-index `try/catch`. **Per-index isolation:** an index with any failed step is excluded from the final PR
+  (`env.<repo>_failed_steps` / `env.<repo>_failed_branches` feed the email's ERROR line); the PR built from the
+  remaining good indices carries no warning. `env.cnic_failed` / `env.mmg800_failed` now only mean "the final PR is
+  itself incomplete" (skipped cherry-pick) → "DON'T MERGE". **A red build with a clean PR is expected.**
 - **generate_anvm self-healing**: first run uses the cache; on failure it re-runs once with `-caching_f True`
   (force rebuild) so the post-run `compress_caching_directories()` writes a complete archive that this stage commits.
   Only if the retry also fails is the branch marked failed. `-validate_crif True` is always on.

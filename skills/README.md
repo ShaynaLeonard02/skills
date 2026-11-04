@@ -25,6 +25,7 @@ inside the skill itself (not a separate doc) so it can never drift out of sync w
 | [create-step](./create-step/SKILL.md) | Create a new stepping/environment directory (EMULATION/R<N>, SIMICS/vp<N>, or a hybrid step mixing two steppings) for mmg-800 / mmg / mev / cnic | `python3 <skill-dir>/scripts/build_step.py --base-root <dir> --dest-root <dir> --mode copy\|symlink` |
 | [nvmgeneration-pipeline](./nvmgeneration-pipeline/SKILL.md) | Explain/debug the NVMGeneration.groovy Jenkins pipeline (PR-bundle checker-status logic); log forensics + known-bug history | `python3 <skill-dir>/scripts/diagnose_pipeline_log.py <jenkins_console_log>` |
 | [caching-pipeline](./caching-pipeline/SKILL.md) | Explain/debug/fix the nightly CachingPipeline.groovy Jenkins job (MMG800/CNIC step caching, generate/generate_anvm, squash+PR); log forensics + known-issue history | `python3 <skill-dir>/scripts/diagnose_caching_log.py <jenkins_console_log>` |
+| [al-validation-pipeline](./al-validation-pipeline/SKILL.md) | Explain/debug/fix the al_validation.groovy Jenkins job (OSAL/AUTO_LOAD resolution, mini_crif erase, validate_auto_load.py run, log.txt/email result); log forensics + architecture/quirks reference | `python3 <skill-dir>/scripts/diagnose_al_validation_log.py <jenkins_console_log>` |
 | [reset-nvm-cache](./reset-nvm-cache/SKILL.md) | Clear both root-level NVM hash caches and create a local commit without including unrelated staged changes | `/reset-nvm-cache <target_repo_path>` |
 
 ## Installing a skill into a repo

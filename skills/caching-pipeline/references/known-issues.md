@@ -110,8 +110,8 @@ with three failure modes (all observed/possible):
 
 Look for `CONFLICT` / `could not apply` (S6) and the new
 `ERROR: <REPO>: cherry-pick of <sha> FAILED` / `merge conflicts in:` markers near `cachingFinal-`
-creation. Failed indices (`*_failed`) contribute commits too — partial results are intentionally still
-PR'd, flagged "DON'T MERGE".
+creation. *(Superseded by #16: failed indices no longer contribute commits; `*_failed` now only flags a
+skipped cherry-pick.)*
 
 ## 6. GitHub / auth / proxy failures
 
@@ -262,3 +262,24 @@ unchanged, so the `Branch: <name>` log lines (relied on by
 **Check:** after the fix, each branch circle must be green on success and red
 when its `catchError` catches a `error(...)`. If circles go white again, look
 for a new `parallel` call site that bypasses `stagedParallel`.
+
+## 16. Failed indices are excluded from the final PR (per-index isolation)
+
+**Status: IMPLEMENTED (working tree on top of `7dec74e08`).**
+
+**Behavior:** every index still runs and reports as before (red branch circles, `ERROR:` log lines, build
+`FAILURE`, "Caching Pipeline FAILED" mail). If any step of index *N* fails (`generate`, `generate_anvm` incl. its
+`-caching_f` retry, `generate_super_image`, the MMG800 HIF pre-flight, or an exception in the index), then:
+- its commits are **not** added to `allCommits`, so they never reach `cachingFinal-*`;
+- its step labels (`<folder>/<symlink>:<step>`, e.g. `NSC/CNIC_800_EMULATION_A0/latest:R51`) go to
+  `env.<repo>_failed_steps` and the email shows `🔴👮‍♀️ERROR in these steps: [...]`;
+- its `caching-<date>-N` branch is kept on GitHub (listed in the email) instead of deleted;
+- the PR from the remaining good indices is mailed **without** a DON'T MERGE warning.
+Example: MMG800 with 3 indices, #3 fails → PR combines #1+#2 (clean line), plus an ERROR line for #3's steps.
+If all indices fail → "no PR needed" + the ERROR line.
+
+**Log markers:** `ERROR: <REPO> index N had failed steps (...) - its K commit(s) on caching-<date>-N are EXCLUDED`,
+or `ERROR: <REPO> index N commits (if any) are EXCLUDED` for the exception path.
+**Caveats:** `env.<repo>_failed` is now set only by a skipped cherry-pick (→ DON'T MERGE). A folder with fewer steps
+repeats its last step, so that step's label can appear under a failed index even if the other folder caused it.
+MEV/MMG email items still take the MMG800 PR-level flag (#12 quirk unchanged).

@@ -161,6 +161,56 @@ own), but strictly more honest than leaving old state untouched.
 (no `post{always{}}`-attributable log lines, log simply stops), this is the answer — not a bug to
 keep chasing in `NVMGeneration.groovy` itself.
 
+> Numbering note: issue **#8** (stale `SYS_SYSFW_CREDENTIALS_ID` token silently 404ing →
+> `waitForPrHeadSha()` always saw a null head / `update_pr.py` resolved stale commits; fixed by
+> switching `updateBundleCheckerStatus()` to `github().CREDENTIALS_ID_GITHUB_TOKEN_MAIN`) is
+> referenced from the code comment in `updateBundleCheckerStatus()` but was never written up here.
+
+## 9. Agent remoting channel dies during `Checkout SCM` — `post{}` runs but cannot post any status
+
+**Status: KNOWN / infra flake — only partially mitigable from pipeline code.** (Variant of §7:
+there, `post{}` never runs; here it *runs* but every agent-bound step inside it fails.)
+
+**Real incident: build #4927 (2026-11-04, agent `sdk_agent_scyarc043`).** Symptom signature:
+
+1. **The agent was already unhealthy before the build started**: Jenkins' `ResponseTimeMonitor`
+   issued `hudson.model.Computer$TerminationRequest` disconnects at 06:50:04, 06:51:34 and
+   06:53:31 — the build only started at 06:59:53 on that same agent. (These termination requests
+   surface later in the log as `Also:` frames attached to the `post{}` error.)
+2. During the very first stage (`Checkout SCM`), the `git fetch` remote call died with
+   `java.io.StreamCorruptedException: invalid stream header: 37352E30` → `Caused:
+   hudson.remoting.RequestAbortedException` → `ERROR: Maximum checkout retry attempts reached,
+   aborting`. `0x37 0x35 0x2E 0x30` is ASCII **"75.0"** — plain text injected into the Java
+   remoting stream, i.e. the agent channel got corrupted/broken mid-call (NFS-hosted workspace
+   `/nfs/site/proj/mmg/...` + the response-time kills point at a slow/sick agent host, or stray
+   stdout leaking into the remoting process).
+3. **Every stage is then skipped** "due to earlier failure(s)" — including **"Mark Bundle PRs
+   Pending"**, so the §7 PENDING mitigation never fires (checkout is *before* it).
+4. `post { always {} }` **does** run (controller-side `echo`s work):
+   - `getBundlePullRequests()` throws `MissingPropertyException: No such property:
+     nvm_gen_branch` — the branch globals are only assigned in stages that never ran. The
+     existing fallback catches this and targets only the triggering PR. **Working as designed.**
+   - But `updateBundleCheckerStatus()` → `github()` → `pwd()` (lazy `load()` of
+     `ci_groovy/github.groovy`) needs a live `FilePath` on the agent →
+     `org.jenkinsci.plugins.workflow.support.steps.AgentOfflineException: Unable to create live
+     FilePath for <agent>; <agent> was marked offline: Connection was broken` → "Error when
+     executing always post condition" → **no status (FAILURE *or* PENDING) is ever posted**; the
+     PR checker silently keeps its previous state.
+
+**Why it's inconsistent**: it only reproduces when the build lands on an agent whose remoting
+channel breaks mid-build (watch for `ResponseTimeMonitor` termination requests shortly *before*
+the build in the attached `Also:` frames). Identical code, different agent/health → green run.
+
+**What to do when you see it**:
+- Treat as **infrastructure first**: report/restart the named agent, check its NFS mount and
+  network latency; the pre-build response-time terminations are the smoking gun. If
+  `invalid stream header: <hex>` decodes to readable ASCII, something is also writing plain text
+  into the agent's remoting stdout.
+- Pipeline-side, full self-healing is impossible (every status-posting path — `github()`'s
+  `load()`, `update_pr.py` via `sh` — is agent-bound). A partial hardening would be to allocate a
+  **fresh `node`** inside `post{}` when the original agent is offline and re-clone just
+  `SDK_TOOLS_REPO` there before calling `update_pr.py` — significant change, not implemented.
+
 ---
 
 ## Real incident this was diagnosed from (build #4523)
