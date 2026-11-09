@@ -16,14 +16,25 @@ Runs `hifmc_db.py` to (re)generate HIF Master Control autoload CSVs and copies t
 - "regenerate HIF autoloads for mmg / mmg-800 / cnic"
 - "refresh the hif_acc_rp / hif_pcir_config_space / hif_car_rst_hifmc_* CSVs"
 
+## Source Repos (hifmc_db)
+
+| Project family | Projects | Source repo | Path inside repo | Script option |
+|---|---|---|---|---|
+| ggl | mmg400, mmg800, mev | `networking.ipu.firmware` | `ucode/hif-shared/hifmc_db` | `--ipu-repo` / `HIFMC_IPU_REPO` |
+| row | cnic, lwc, mmgts | `firmware.ethernet.imc-fw-row` | `hif-shared/hifmc_db` | `--row-repo` / `HIFMC_ROW_REPO` |
+
+The old ggl repo is archived — never use it. If a clone is missing at the default path, pass the
+real path via the option or env var.
+
 ## Repo → Topology → Destination Map
 
-| Destination repo basename | Topologies generated | Source repo (has `hifmc_db.py`) | Destination paths |
+| Destination repo basename | Topologies generated | Source repo | Destination paths |
 |---|---|---|---|
-| `mmg` | `mmg` (suffix stripped), `lwc` (suffix kept) | `networking.ipu.firmware` (`ucode/hif-shared/hifmc_db`; replaces the archived ggl repo) — `lwc` still comes from the row repo | `MMG/HW/latest/FLASH_s/ALs/HIF`, `MMG/SIMICS/latest/FLASH_s/ALs/HIF` |
-| `mmg-800` | `mmg` (suffix stripped) | `networking.ipu.firmware` (`ucode/hif-shared/hifmc_db`) | `MMG800/EMULATION/<target>/FLASH_s/ALs/HIF` (default target: `latest`) |
-| `cnic` | `row`, `bts`, `fnic` (suffix kept) | row repo (`.../hif-shared/hifmc_db`) | `NSC/CNIC_800_{EMULATION,SIMICS}_A0/latest/FLASH_s/ALs/HIF/{row,,fnic}` (bts has no subfolder) |
-| `mev` | — | — | **Excluded intentionally** — not a destination in `CachingPipeline.groovy`'s copy stage |
+| `mmg` | `mmg` (suffix stripped) from ipu; `lwc` (suffix kept) from row | `networking.ipu.firmware` + `firmware.ethernet.imc-fw-row` | `MMG/HW/latest/FLASH_s/ALs/HIF`, `MMG/SIMICS/latest/FLASH_s/ALs/HIF` |
+| `mmg-800` | `mmg` (suffix stripped) | `networking.ipu.firmware` | `MMG800/EMULATION/<target>/FLASH_s/ALs/HIF` (default target: `latest`) |
+| `cnic` | `row`, `bts`, `fnic` (suffix kept) | `firmware.ethernet.imc-fw-row` | `NSC/CNIC_800_{EMULATION,SIMICS}_A0/latest/FLASH_s/ALs/HIF/{row,,fnic}` (bts has no subfolder) |
+| `mev` | — | `networking.ipu.firmware` (source only) | **No destination profile** — not a destination in `CachingPipeline.groovy`'s copy stage |
+| `mmg-ts` | — | `firmware.ethernet.imc-fw-row` (source only) | **No destination profile yet** — add one in the script once the destination path is known |
 
 Only `*.nvm.csv` files are copied (never `.bin`/`.h` — those stay in the source `output_<topology>/` dir).
 
@@ -67,7 +78,7 @@ python3 <skill-dir>/scripts/generate_hifmc_als.py /home/sleonarx/mmg --skip-gene
 3. Review the printed summary (`N new, N updated, N unchanged` files). The script diffs existing
    destination files by content before overwriting, so unchanged files are left untouched (no
    needless mtime churn).
-4. If asked for `mev`, refuse and explain it is intentionally excluded (see table above).
+4. If asked for `mev` or `mmg-ts`, explain there is no destination profile yet (see table above).
 5. After copying, remind the user that no commit/push is performed automatically — review
    `git status` in the destination repo(s) before committing.
 

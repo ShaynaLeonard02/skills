@@ -25,15 +25,18 @@ import sys
 # Source repos that contain hifmc_db.py, and which --topology values each
 # one is responsible for generating.
 # ---------------------------------------------------------------------------
-# The old ggl repo was archived; hifmc_db now lives in networking.ipu.firmware
-# (ucode/hif-shared/hifmc_db). It ships topologies 'mmg' and 'mmg800' only.
-DEFAULT_GGL_REPO = "/home/sleonarx/networking.ipu.firmware/ucode/hif-shared/hifmc_db"
-DEFAULT_ROW_REPO = "/home/sleonarx/projects/row_repo_name_repo/sources/imc/hif-shared/hifmc_db"
+# ggl projects (mmg400, mmg800, mev): networking.ipu.firmware (ucode/hif-shared/hifmc_db).
+# row projects (cnic, lwc, mmgts): firmware.ethernet.imc-fw-row (hif-shared/hifmc_db).
+# Override the clone locations with --ipu-repo/--row-repo or HIFMC_IPU_REPO/HIFMC_ROW_REPO.
+DEFAULT_IPU_REPO = os.environ.get(
+    "HIFMC_IPU_REPO", "/home/sleonarx/networking.ipu.firmware/ucode/hif-shared/hifmc_db")
+DEFAULT_ROW_REPO = os.environ.get(
+    "HIFMC_ROW_REPO", "/home/sleonarx/firmware.ethernet.imc-fw-row/hif-shared/hifmc_db")
 
 # topology -> (source repo key, whether the topology suffix should be
 # stripped from filenames when copied to the destination)
 TOPOLOGY_INFO = {
-    "mmg":  {"repo": "ggl", "strip_suffix": True},
+    "mmg":  {"repo": "ipu", "strip_suffix": True},
     "lwc":  {"repo": "row", "strip_suffix": False},
     "bts":  {"repo": "row", "strip_suffix": False},
     "row":  {"repo": "row", "strip_suffix": False},
@@ -218,8 +221,10 @@ def copy_files(output_dir, dest_dir, topology, strip_suffix, dry_run):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("repo_path", help="Destination repo to generate HIF-MC ALs for (mmg, mmg-800, or cnic)")
-    parser.add_argument("--ggl-repo", default=DEFAULT_GGL_REPO, help="Path to the hifmc_db dir (networking.ipu.firmware/ucode/hif-shared/hifmc_db) for topology 'mmg'")
-    parser.add_argument("--row-repo", default=DEFAULT_ROW_REPO, help="Path to the hifmc_db source repo for topologies lwc/bts/row/fnic")
+    parser.add_argument("--ipu-repo", "--ggl-repo", dest="ipu_repo", default=DEFAULT_IPU_REPO,
+                        help="hifmc_db dir in networking.ipu.firmware (ggl projects: topology 'mmg')")
+    parser.add_argument("--row-repo", default=DEFAULT_ROW_REPO,
+                        help="hifmc_db dir in firmware.ethernet.imc-fw-row (row projects: lwc/bts/row/fnic)")
     parser.add_argument("--mmg800-targets", default="latest",
                          help="For mmg-800 destinations only: 'latest' (default), 'all', or a comma list like 'R27,R28'")
     parser.add_argument("--skip-generate", action="store_true", help="Skip running hifmc_db.py; reuse existing output_<topology> dirs")
@@ -231,7 +236,7 @@ def main():
         sys.exit(f"Target repo path does not exist: {repo_path}")
 
     profile = identify_profile(repo_path)
-    source_repos = {"ggl": args.ggl_repo, "row": args.row_repo}
+    source_repos = {"ipu": args.ipu_repo, "row": args.row_repo}
 
     print(f"=== Generating HIF-MC ALs for '{profile.name}' repo: {repo_path} ===")
 
