@@ -213,6 +213,51 @@ the build in the attached `Also:` frames). Identical code, different agent/healt
 
 ---
 
+## 10. BID-cache ZIP publication race during parallel non-ANVM generation
+
+**Status: IDENTIFIED CODE RISK; high-confidence explanation for build #5143,
+not fixed.**
+
+Build #5143 (2026-11-11, `sdk_agent_scyarc044`) first fails at 09:47:23 UTC
+with `zipfile.BadZipFile: File is not a zip file` in
+`Image.create_raw_sections_bid_default()` (`image.py:1435` in that run).
+MEV B0/C0/C1 HW FLASH_s branches fail. The pipeline revision was
+`3e909c45807deaf88fd2e2089954ee99eff17a53`; it launches non-ANVM commands
+concurrently against shared config checkouts.
+
+The generator's `generate_raw_files_bid_default()` and
+`generate_raw_files_bid()` lock `caching.json` metadata but release the lock
+before writing `<index>.json/.csv/.zip` directly to their final paths.
+`ZipFile(zip_path, 'w')` truncates a published ZIP, while cache readers open
+the same file without a matching payload lock. Readers can therefore observe
+an incomplete ZIP before its central directory is written on close. Separate
+image output directories do not isolate these AL-directory-local caches.
+
+An isolated temporary-ZIP experiment reproduced the exact error during an
+in-place rewrite and passed after writer close. Structured inspection of the
+local MEV B0/C0/C1 HW FLASH_s configs confirmed 25 shared common AL files.
+This is mechanism validation, not a full pipeline reproduction.
+
+**Evidence limits:** the console does not print the failing ZIP path or identify
+its concurrent writer; a pre-existing corrupt ZIP cannot be excluded from this
+log alone. The code establishes a race window, not a trace of that exact race.
+
+Fix in the generator: synchronize whole-entry reads/writes and publish complete
+payloads before metadata, using same-directory temporary files and atomic
+replacement as appropriate. Pipeline mitigation: serialize workers sharing
+mutable caches or isolate their config checkouts (account for MMG800 `-cm`
+sharing MMG inputs). Do not rely on blind retries or cache resets.
+
+The 45 offline/back-online pairs in this run begin **after** the ZIP failures,
+at 09:48:51 UTC, and report `InterruptedException`; no `NotSerializableException`
+was found. Their cause is unconfirmed, not evidence for issue #1. Both PENDING
+and final FAILURE checker calls for MEV PR #2851 reported success.
+
+Local investigation: `/home/sleonarx/nvmgeneration_5143_analysis.txt` and
+`/home/sleonarx/nvmgeneration_5143_console.log`.
+
+---
+
 ## Real incident this was diagnosed from (build #4523)
 
 A bundle of 2 PRs: **mmg** PR #2265 (no new AL changes this run — `mmg config changed status
