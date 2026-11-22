@@ -205,7 +205,14 @@ MMG800 per-step copy nor of `verifyRequiredAlFiles()` for CNIC. If a CNIC `gener
 
 ## 14. Unpacked caches from unrelated steps enter per-index commits
 
-**Status: CONFIRMED in the 2026-11-01 unsquashed debug run.**
+**Status: FIXED (working tree, 2026-11-15) - this was the real dominant cause of the MMG800
+`caching-2026-11-15-012735` "DON'T MERGE" run (PR #502, 3 skipped cherry-picks), confirmed by
+locally replaying `allCommits` (the actual filtered commit list `getCommitsOnBranch` produces,
+i.e. `generate results for index N` only - `Set symlinks` commits are already excluded there and
+were never the real conflict source): index 1's commit hit 730 add/add conflicts, entirely under
+`MMG800/EMULATION/R28_R29_hybrid/FLASH_s/ALs/HIF/topo*/caching_files/*` and `.../IMC/caching_files/*`
+plus `al_path_to_hash_bid.json`. `R28_R29_hybrid` is in `perFolderForceRun`, so it is extracted by
+every index, making it the recurring conflict source.**
 
 **Symptom:** an index whose `latest` links select hybrid steps also adds thousands
 of files under older steps' `caching_files/` and `caching_files_bid/`.
@@ -223,13 +230,43 @@ steps' archives changes. A PKB `0.csv` sample from each matches both its parent'
 archive member and index-0 commit `b28d0cae`. Do not interpret these additions as
 proof that the older steps were rebuilt.
 
-**Fix direction:** restrict per-index staging to intended cache artifacts,
-excluding unpacked cache directories and image/output leftovers. Consolidate
-root hash registries separately; do not silently skip conflicting commits.
-*(Partially addressed via #5: `generate_output`/`cnic_boot_image_output`/root
-`image_*` leftovers are no longer committed, and conflicting cherry-picks are
-now logged with their conflict hunks and flagged as FAILURE instead of being
-skipped silently. The unpacked `caching_files*/` staging itself is still OPEN.)*
+**Fix (in code, `processMmg800Config`'s "Commit any generated files" block):** before `git add -A`,
+`find . -type d \( -name caching_files -o -name caching_files_bid \) | xargs git clean -fdq --`
+removes the unpacked extraction directories (untracked by design - only the sibling
+`caching_files*.tar.gz` is ever committed, confirmed via `git ls-tree`: 0 tracked `caching_files/`
+paths, 723 tracked `caching_files*.tar.gz` paths), with a matching defensive `git reset HEAD --`
+pass after `add -A` for any already-tracked leftovers, same pattern as the existing
+`generate_output`/`image_*` exclusion. *(Also addressed via #5: `generate_output`/
+`cnic_boot_image_output`/root `image_*` leftovers are no longer committed, and conflicting
+cherry-picks are logged with their conflict hunks and flagged as FAILURE instead of being
+skipped silently.)*
+
+**Verify after next nightly run:** the per-index `generate results for index N` commits should no
+longer touch any `caching_files/<n>.{json,zip,csv}` path - only `caching_files*.tar.gz`,
+`al_path_to_hash*.json`, and genuinely-changed tracked files. If conflicts persist, check for a new
+extraction path not matching the `caching_files`/`caching_files_bid` directory names.
+
+**CONFIRMED PARTIAL FIX ONLY (build #254, 2026-11-15, SCM_BRANCH=`dev/sleonarx/loose-caching` @
+`ad117452a` which already includes this fix):** the loose-file flood is gone (each index's
+`generate results` commit is now 91-221 files, not thousands), but cherry-pick conflicts **still
+occurred for 3 of 4 indices**, confined 100% to the two root files `al_path_to_hash.json` and
+`al_path_to_hash_bid.json` (`git diff --name-only --diff-filter=U` showed exactly those two paths
+for every one of the 3 failed picks). Root cause confirmed from the log: **every index's own
+`generate`/`generate_anvm` run rewrites these 2 root hash-cache files with entries spanning
+multiple/all steps, not just the step its own `latest` symlink targets** - e.g. index 0 (target
+`R27_R28_hybrid`/`vp28`) still touched `R27`, `R27_R28_hybrid`, *and* `R28` archives/hashes in its
+own commit. So any two indices' commits almost always touch overlapping JSON regions with
+different hash values, and `git cherry-pick` cannot 3-way-merge that - only the first index's
+commit ever makes it into the final PR; the rest are skipped whole (not just the 2 conflicting
+files - the entire commit, including that index's genuinely-unique `*.tar.gz` updates for steps the
+other indices didn't touch). This is the same "generator rescans the whole config root" behavior
+as the root cause above, just not addressed by the loose-directory cleanup. **Not yet fixed** - a
+likely-safe fix (not yet implemented, needs sign-off since it changes cherry-pick behavior): when a
+conflict is confined to exactly `al_path_to_hash.json`/`al_path_to_hash_bid.json`, auto-resolve by
+unioning both sides' JSON keys (these are derived cache maps, not hand-authored config) instead of
+skipping the whole commit, logging a loud warning if the same key gets two different hash values
+(that would indicate real generator nondeterminism worth investigating). Falls back to the existing
+skip+log path for any conflict that touches a file outside this known pair.
 
 ## 15. Parallel branch circles show WHITE (no status) in the Jenkins graph views
 
@@ -263,6 +300,18 @@ unchanged, so the `Branch: <name>` log lines (relied on by
 when its `catchError` catches a `error(...)`. If circles go white again, look
 for a new `parallel` call site that bypasses `stagedParallel`.
 
+**Follow-up bug found (confirmed via Blue Ocean on build #254, 2026-11-15) - FIXED in commit
+`af31314b8` on `dev/sleonarx/loose-caching` (pushed to origin, not yet merged to `SyDK_tools`):**
+`stagedParallel()` gave every branch body a uniquely-prefixed **stage name** (`[MMG800 idx N] ...`),
+but still keyed the `parallel` **map** itself by the bare, unprefixed branch name (e.g.
+`generate_SILICON_FS_s`) - identical across all 4 index iterations in the same build. Screenshot
+evidence on build #254's Blue Ocean pipeline view: the first `Parallel` group's circles were green,
+but every later `Parallel` group's circles (indices 1-3) rendered as hollow/white, even though the
+console log confirms all 4 indices had `[no generate failures logged]` and `VERIFY OK`. Reusing the
+same `parallel` branch key across multiple `parallel()` invocations in one build is what Jenkins'
+graph renderer cannot disambiguate - it only paints the first occurrence of each key. Fix: key the
+`parallel` map by the prefixed `stageName` too, not just the inner `stage()` call.
+
 ## 16. Failed indices are excluded from the final PR (per-index isolation)
 
 **Status: IMPLEMENTED (working tree on top of `7dec74e08`).**
@@ -283,6 +332,15 @@ or `ERROR: <REPO> index N commits (if any) are EXCLUDED` for the exception path.
 **Caveats:** `env.<repo>_failed` is now set only by a skipped cherry-pick (→ DON'T MERGE). A folder with fewer steps
 repeats its last step, so that step's label can appear under a failed index even if the other folder caused it.
 MEV/MMG email items still take the MMG800 PR-level flag (#12 quirk unchanged).
+
+**Update (commit `af31314b8` on `dev/sleonarx/loose-caching`, pushed, not yet merged to `SyDK_tools`):** the
+"caveat" above is now stale - a skipped cherry-pick no longer sets `env.mmg800_failed`. It was misleading: a
+skipped cherry-pick only drops that one index's cache update (see #14's "CONFIRMED PARTIAL FIX ONLY" update);
+the final squash still stages only `al_path_to_hash*.json`/`*.tar.gz` from whatever *did* apply cleanly, so the
+PR is internally consistent and safe to merge, just incomplete for this cycle. Confirmed on build #254 (ran
+before this fix): 3 of 4 indices' commits were skipped on conflict, yet PR #504 was a normal, mergeable PR -
+the DON'T MERGE label was the only thing wrong. The build still goes red and the `⚠️ N cherry-pick conflict(s)`
+line + retained branches still print either way.
 
 ## 17. CNIC is run-only (no branches, commits or PR)
 

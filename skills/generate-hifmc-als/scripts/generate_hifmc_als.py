@@ -107,6 +107,7 @@ class CnicProfile(RepoProfile):
 PROFILES = {
     "mmg": MmgProfile("mmg"),
     "mmg-800": Mmg800Profile("mmg-800"),
+    "mmg800": Mmg800Profile("mmg-800"),
     "cnic": CnicProfile("cnic"),
 }
 
@@ -129,6 +130,7 @@ def resolve_mmg800_targets(emulation_dir, spec):
 
 def identify_profile(repo_path):
     base = os.path.basename(os.path.normpath(repo_path)).lower()
+    base = base.replace("nvm-generator-config-", "", 1)
     if base in EXCLUDED_REPOS:
         sys.exit(
             f"Repo '{repo_path}' (mev) is intentionally excluded from HIF-MC AL "
